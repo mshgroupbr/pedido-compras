@@ -261,6 +261,7 @@ body.tema-cali .hdr{background:var(--hd)}
     </div>
     <button class="btn-excel-home" onclick="exportConsolidado()"><i class="ti ti-file-spreadsheet"></i> Exportar consolidado do dia</button>
     <button class="btn-excel-home" onclick="exportPendentesPorSetor()"><i class="ti ti-file-spreadsheet"></i> Exportar itens pendentes por setor</button>
+    <button class="btn-excel-home" onclick="ativarAcessoGerenteCompras()" id="btn-gerente-compras" style="border-color:#8B7355;color:#8B7355"><i class="ti ti-key"></i> <span id="txt-gerente-compras">Acesso Gerente de Compras</span></button>
     <div>
       <div class="sec-l" id="list-title">Pedidos</div>
       <div id="req-list" style="display:flex;flex-direction:column;gap:10px"></div>
@@ -526,6 +527,12 @@ function setFilter(f){ filter=f; renderHome(); }
 
 // ---- HOME ----
 function renderHome(){
+  const btnGC=document.getElementById('btn-gerente-compras');
+  if(btnGC){
+    const ativo=isGerenteCompras();
+    document.getElementById('txt-gerente-compras').textContent = ativo ? 'Acesso liberado neste aparelho ✅' : 'Acesso Gerente de Compras';
+    btnGC.style.background = ativo ? '#f5f0e8' : '';
+  }
   const today=new Date().toDateString();
   const unidadeAtiva=getUnidadeAtual();
   const pedsUnidade=allPeds.filter(r=>{
@@ -584,7 +591,8 @@ function renderDetailView(){
       ? '<button type="button" onclick="toggleComprado('+idx+')" title="'+(checked?'Comprado — toque para desmarcar':'Marcar como comprado')+'" style="border:none;background:none;cursor:pointer;font-size:17px;padding:0 8px 0 0;vertical-align:middle;line-height:1">'+(checked?'✅':'⬜')+'</button>'
       : (checked ? '<span style="padding:0 8px 0 0">✅</span>' : '');
     const nameStyle = checked ? 'text-decoration:line-through;color:var(--tx3)' : '';
-    return '<div class="item-falta"><span class="item-falta-key">'+checkBtn+'<span style="'+nameStyle+'">'+it.n+(it.obs?' <span style="color:var(--tx3)">('+it.obs+')</span>':'')+'</span></span><span class="item-falta-val"><span class="item-falta-qty">'+it.q+' '+it.u+'</span></span></div>';
+    const editObsBtn = '<button type="button" onclick="editarObsItem('+idx+')" title="Empresa/fornecedor que atendeu este item" style="border:none;background:none;cursor:pointer;font-size:13px;color:var(--tx3);padding:0 4px;vertical-align:middle"><i class="ti ti-pencil"></i></button>';
+    return '<div class="item-falta"><span class="item-falta-key">'+checkBtn+'<span style="'+nameStyle+'">'+it.n+(it.obs?' <span style="color:var(--tx3)">('+it.obs+')</span>':'')+'</span>'+editObsBtn+'</span><span class="item-falta-val"><span class="item-falta-qty">'+it.q+' '+it.u+'</span></span></div>';
   }).join('');
   const mtBox=document.getElementById('d-marcar-todos');
   if(canCheck && compradosCount < currentDetail.items.length){
@@ -637,7 +645,7 @@ function openAprovModal(action){
   const btn=document.getElementById('modal-aprov-confirm');
   btn.textContent = action==='aprovado' ? 'Confirmar aprovação' : 'Confirmar recusa';
   btn.style.background = action==='aprovado' ? '#1d9e75' : '#e24b4a';
-  document.getElementById('modal-aprov-nome').value='';
+  document.getElementById('modal-aprov-nome').value=nomeGerenteCompras();
   document.getElementById('modal-aprov-obs').value='';
   document.getElementById('modal-aprov').classList.add('show');
   setTimeout(()=>document.getElementById('modal-aprov-nome').focus(),100);
@@ -681,6 +689,21 @@ function salvarDataPrevista(){
     PED_REF.child(currentDetail.fbKey).update(upd);
     currentDetail={...currentDetail,...upd};
     toast('Data prevista salva 📅');
+    renderDetailView();
+  });
+}
+function editarObsItem(idx){
+  if(!currentDetail) return;
+  const item = currentDetail.items[idx];
+  if(!item) return;
+  const atual = item.obs || '';
+  const novo = prompt('Empresa/fornecedor que atendeu este item:', atual);
+  if(novo===null) return;
+  askSenha('Salvar observação do item', ()=>{
+    const items = currentDetail.items.map((it,i)=> i===idx ? {...it, obs: novo.trim()} : it);
+    PED_REF.child(currentDetail.fbKey).update({items});
+    currentDetail = {...currentDetail, items};
+    toast('Observação salva ✅');
     renderDetailView();
   });
 }
@@ -750,7 +773,33 @@ function confirmDelete(){
 }
 
 // ---- SENHA (genérico, usado para aprovar/recusar, marcar/desmarcar fornecedor, salvar data prevista) ----
+// ---- ACESSO GERENTE DE COMPRAS (sem senha) ----
+function isGerenteCompras(){
+  return localStorage.getItem('pc_gerente_compras')==='1';
+}
+function nomeGerenteCompras(){
+  return localStorage.getItem('pc_gerente_compras_nome')||'';
+}
+function ativarAcessoGerenteCompras(){
+  if(isGerenteCompras()){
+    if(confirm('O acesso sem senha já está ativo neste aparelho.\n\nDeseja desativar?')){
+      localStorage.removeItem('pc_gerente_compras');
+      toast('Acesso removido deste aparelho');
+      renderHome();
+    }
+    return;
+  }
+  const senha = prompt('Digite a senha para ativar o acesso da Gerente de Compras neste aparelho:');
+  if(senha===null) return;
+  if(senha.trim()!=='2202'){ toast('Senha incorreta ❌'); return; }
+  const nome = prompt('Seu nome (será usado nas aprovações):') || '';
+  localStorage.setItem('pc_gerente_compras','1');
+  if(nome.trim()) localStorage.setItem('pc_gerente_compras_nome', nome.trim());
+  toast('✅ Acesso liberado neste aparelho — sem senha a partir de agora');
+  renderHome();
+}
 function askSenha(title, callback){
+  if(isGerenteCompras()){ callback(); return; }
   senhaCallback=callback;
   document.getElementById('modal-senha-title').textContent=title;
   document.getElementById('modal-senha-input').value='';
