@@ -223,9 +223,13 @@ body.tema-cali .hdr{background:var(--hd)}
 .pt-tabs button.on{background:var(--hd);color:#fff;border-color:var(--hd)}
 .pt-grp{background:var(--surf);border:.5px solid var(--bdr);border-radius:var(--r);overflow:hidden;margin-bottom:10px}
 .pt-grp h3{font-size:13px;font-weight:700;padding:10px 14px;background:var(--surf2);display:flex;justify-content:space-between}
-.pt-row{display:grid;grid-template-columns:1fr auto auto;gap:10px;padding:9px 14px;border-top:.5px solid var(--bdr);font-size:14px;align-items:center}
+.pt-row{display:grid;grid-template-columns:auto 1fr auto auto;gap:10px;padding:9px 14px;border-top:.5px solid var(--bdr);font-size:14px;align-items:center}
 .pt-row small{color:var(--tx3);font-size:11px}
 .pt-q{font-weight:700;color:var(--or)}
+.pt-ck{border:none;background:none;cursor:pointer;font-size:20px;line-height:1;padding:0}
+#pt-undo{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%);background:#1a1a2e;color:#fff;padding:10px 12px 10px 18px;border-radius:30px;font-size:14px;display:none;align-items:center;gap:12px;z-index:998;white-space:nowrap}
+#pt-undo button{background:rgba(255,255,255,.18);border:none;color:#fff;border-radius:20px;padding:6px 14px;font-weight:600;cursor:pointer;font-family:inherit}
+body.desk #pt-undo{left:calc(50% + 124px)}
 .pt-un{color:var(--tx2);min-width:34px}
 /* === MODO COMPUTADOR (menu lateral) === */
 #modebar{display:flex;justify-content:flex-end;padding:6px 12px;background:var(--bg)}
@@ -440,6 +444,7 @@ body.desk.no-side #toast{left:50%}
 
 </div>
 <div id="side"></div>
+<div id="pt-undo"><span id="pt-undo-t"></span><button onclick="ptDesfazer()">Desfazer</button></div>
 <div id="toast"></div>
 <div id="loading-bar"></div>
 
@@ -573,6 +578,7 @@ function goTo(id){
   if(id==='s-home') renderHome();
   if(id==='s-form' && !editingId) initForm();
   try{ atualizarLayoutTela(id); }catch(e){}
+  if(id!=='s-pendentes'){ const u=document.getElementById('pt-undo'); if(u) u.style.display='none'; }
 }
 function toast(msg){
   const t=document.getElementById('toast');
@@ -1178,17 +1184,20 @@ function exportPendentesPorSetorExec(){
 }
 
 // ---- PENDENTES POR SETOR: tela de visualização ----
-var _ptRows=[], _ptAba=1;
+var _ptRows=[], _ptAba=1, _ptDone={}, _ptLast=null, _ptTimer=null;
 function ptEsc(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
-function abrirPendentesPorSetor(){
+function ptRebuild(){
   _ptRows=[];
   allPeds.filter(function(r){ return r.status==='aprovado'; }).forEach(function(p){
-    (p.items||[]).forEach(function(it){
-      if(!it.comprado) _ptRows.push({data:fmtDataCurta(p.ts), setor:p.setor+' ('+p.unidade+')', produto:it.n, qtd:it.q, un:it.u});
+    (p.items||[]).forEach(function(it,i){
+      if(!it.comprado && !_ptDone[p.fbKey+'#'+i]) _ptRows.push({k:p.fbKey, i:i, data:fmtDataCurta(p.ts), setor:p.setor+' ('+p.unidade+')', produto:it.n, qtd:it.q, un:it.u});
     });
   });
-  if(!_ptRows.length){ toast('Nenhum item pendente de compra 🎉'); return; }
   _ptRows.sort(function(a,b){ return a.setor.localeCompare(b.setor) || a.produto.localeCompare(b.produto); });
+}
+function abrirPendentesPorSetor(){
+  _ptDone={}; ptRebuild();
+  if(!_ptRows.length){ toast('Nenhum item pendente de compra 🎉'); return; }
   _ptAba=1; goTo('s-pendentes'); ptRender();
 }
 function ptAba(n){ _ptAba=n; ptRender(); }
@@ -1196,20 +1205,60 @@ function ptRender(){
   document.getElementById('pt-t1').classList.toggle('on', _ptAba===1);
   document.getElementById('pt-t2').classList.toggle('on', _ptAba===2);
   const setores={}; _ptRows.forEach(function(r){ (setores[r.setor]=setores[r.setor]||[]).push(r); });
-  document.getElementById('pt-sub').textContent = _ptRows.length+' itens em '+Object.keys(setores).length+' setor(es)';
+  document.getElementById('pt-sub').textContent = _ptRows.length ? _ptRows.length+' itens em '+Object.keys(setores).length+' setor(es)' : 'tudo resolvido';
   let h='';
-  if(_ptAba===1){
+  if(!_ptRows.length){ h='<div class="card" style="text-align:center;padding:28px 16px">Tudo resolvido 🎉<br><small style="color:var(--tx3)">Nenhum item pendente de compra</small></div>'; }
+  else if(_ptAba===1){
     Object.keys(setores).forEach(function(s){
       h+='<div class="pt-grp"><h3><span>'+ptEsc(s)+'</span><span>'+setores[s].length+' itens</span></h3>'+
-        setores[s].map(function(r){ return '<div class="pt-row"><div>'+ptEsc(r.produto)+'<br><small>pedido de '+ptEsc(r.data)+'</small></div><div class="pt-q">'+ptEsc(r.qtd)+'</div><div class="pt-un">'+ptEsc(r.un)+'</div></div>'; }).join('')+'</div>';
+        setores[s].map(function(r){ return '<div class="pt-row"><button class="pt-ck" title="Marcar como resolvido" onclick="ptMarcar(\''+ptEsc(r.k)+'\','+r.i+')">⬜</button><div>'+ptEsc(r.produto)+'<br><small>pedido de '+ptEsc(r.data)+'</small></div><div class="pt-q">'+ptEsc(r.qtd)+'</div><div class="pt-un">'+ptEsc(r.un)+'</div></div>'; }).join('')+'</div>';
     });
   } else {
-    const m={}; _ptRows.forEach(function(r){ const k=r.produto+'|'+r.un; if(!m[k]) m[k]={produto:r.produto,un:r.un,qtd:0}; m[k].qtd+=(parseFloat(String(r.qtd).replace(',','.'))||0); });
+    const m={}; _ptRows.forEach(function(r){ const k=r.produto+'|'+r.un; if(!m[k]) m[k]={produto:r.produto,un:r.un,qtd:0,n:0}; m[k].qtd+=(parseFloat(String(r.qtd).replace(',','.'))||0); m[k].n++; });
     const arr=Object.values(m).sort(function(a,b){ return a.produto.localeCompare(b.produto); });
     h='<div class="pt-grp"><h3><span>Total para compra</span><span>'+arr.length+' produtos</span></h3>'+
-      arr.map(function(s){ const q=Number.isInteger(s.qtd)?s.qtd:Math.round(s.qtd*100)/100; return '<div class="pt-row"><div>'+ptEsc(s.produto)+'</div><div class="pt-q">'+q+'</div><div class="pt-un">'+ptEsc(s.un)+'</div></div>'; }).join('')+'</div>';
+      arr.map(function(s){ const q=Number.isInteger(s.qtd)?s.qtd:Math.round(s.qtd*100)/100; return '<div class="pt-row"><button class="pt-ck" title="Marcar todos como resolvido" onclick="ptMarcarProduto(decodeURIComponent(\''+encodeURIComponent(s.produto)+'\'),decodeURIComponent(\''+encodeURIComponent(s.un)+'\'))">⬜</button><div>'+ptEsc(s.produto)+(s.n>1?'<br><small>'+s.n+' pedidos</small>':'')+'</div><div class="pt-q">'+q+'</div><div class="pt-un">'+ptEsc(s.un)+'</div></div>'; }).join('')+'</div>';
   }
   document.getElementById('pt-conteudo').innerHTML=h;
+}
+function ptGravar(lista, val){
+  // lista: [{k,i}] — agrupa por pedido e grava os itens de uma vez
+  const por={}; lista.forEach(function(x){ (por[x.k]=por[x.k]||[]).push(x.i); });
+  const quem=nomeGerenteCompras()||'';
+  Object.keys(por).forEach(function(k){
+    const ped=allPeds.find(function(p){ return p.fbKey===k; }); if(!ped) return;
+    const items=(ped.items||[]).map(function(it,i){
+      if(por[k].indexOf(i)<0) return it;
+      const n=Object.assign({}, it, {comprado:val});
+      if(val){ n.compradoEm=Date.now(); if(quem) n.compradoPor=quem; } else { delete n.compradoEm; delete n.compradoPor; }
+      return n;
+    });
+    PED_REF.child(k).update({items:items});
+  });
+}
+function ptAplicar(lista, rotulo){
+  lista.forEach(function(x){ _ptDone[x.k+'#'+x.i]=true; });
+  _ptLast=lista; ptGravar(lista,true); ptRebuild(); ptRender();
+  document.getElementById('pt-undo-t').textContent='✅ '+rotulo;
+  document.getElementById('pt-undo').style.display='flex';
+  clearTimeout(_ptTimer); _ptTimer=setTimeout(function(){ document.getElementById('pt-undo').style.display='none'; _ptLast=null; }, 7000);
+}
+function ptMarcar(k,i){
+  const r=_ptRows.find(function(x){ return x.k===k && x.i===i; }); if(!r) return;
+  ptAplicar([{k:k,i:i}], r.produto+' resolvido');
+}
+function ptMarcarProduto(prod, un){
+  const l=_ptRows.filter(function(r){ return r.produto===prod && r.un===un; }).map(function(r){ return {k:r.k,i:r.i}; });
+  if(!l.length) return;
+  ptAplicar(l, prod+' resolvido ('+l.length+(l.length>1?' pedidos':' pedido')+')');
+}
+function ptDesfazer(){
+  if(!_ptLast) return;
+  const l=_ptLast; _ptLast=null;
+  l.forEach(function(x){ delete _ptDone[x.k+'#'+x.i]; });
+  ptGravar(l,false); ptRebuild(); ptRender();
+  document.getElementById('pt-undo').style.display='none'; clearTimeout(_ptTimer);
+  toast('Desfeito');
 }
 
 // ---- INIT ----
