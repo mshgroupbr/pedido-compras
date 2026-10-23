@@ -218,6 +218,15 @@ textarea{resize:none;line-height:1.5}
 /* HEADER THEMING BY UNIT */
 body.tema-texas .hdr{background:#7A1F1F}
 body.tema-cali .hdr{background:var(--hd)}
+.pt-tabs{display:flex;gap:6px}
+.pt-tabs button{flex:1;border:.5px solid var(--bdr2);background:var(--surf);color:var(--tx2);padding:10px;border-radius:var(--rs);font-size:14px;font-weight:600;cursor:pointer;font-family:inherit}
+.pt-tabs button.on{background:var(--hd);color:#fff;border-color:var(--hd)}
+.pt-grp{background:var(--surf);border:.5px solid var(--bdr);border-radius:var(--r);overflow:hidden;margin-bottom:10px}
+.pt-grp h3{font-size:13px;font-weight:700;padding:10px 14px;background:var(--surf2);display:flex;justify-content:space-between}
+.pt-row{display:grid;grid-template-columns:1fr auto auto;gap:10px;padding:9px 14px;border-top:.5px solid var(--bdr);font-size:14px;align-items:center}
+.pt-row small{color:var(--tx3);font-size:11px}
+.pt-q{font-weight:700;color:var(--or)}
+.pt-un{color:var(--tx2);min-width:34px}
 /* === MODO COMPUTADOR (menu lateral) === */
 #modebar{display:flex;justify-content:flex-end;padding:6px 12px;background:var(--bg)}
 .modeseg{display:inline-flex;border:.5px solid var(--bdr2);border-radius:20px;overflow:hidden;background:var(--surf)}
@@ -344,6 +353,20 @@ body.desk.no-side #toast{left:50%}
       Enviar pedido (WhatsApp)
     </button>
     <button class="btn-sec" onclick="saveDraft()">Salvar como rascunho</button>
+  </div>
+</div>
+
+<!-- PENDENTES POR SETOR (visualização) -->
+<div class="screen" id="s-pendentes">
+  <div class="hdr">
+    <div class="hico"><i class="ti ti-list-details"></i></div>
+    <div class="htxt"><h1>Itens pendentes</h1><p id="pt-sub">—</p></div>
+    <button class="back" onclick="goTo('s-home')"><i class="ti ti-x"></i></button>
+  </div>
+  <div class="body">
+    <div class="pt-tabs"><button id="pt-t1" class="on" onclick="ptAba(1)">Por setor</button><button id="pt-t2" onclick="ptAba(2)">Total por produto</button></div>
+    <div id="pt-conteudo"></div>
+    <button class="btn-or" onclick="exportPendentesPorSetorExec()"><i class="ti ti-file-spreadsheet"></i> Baixar Excel</button>
   </div>
 </div>
 
@@ -1092,7 +1115,7 @@ function fmtDataCurta(ts){
   return pad(d.getDate())+'/'+pad(d.getMonth()+1)+'/'+d.getFullYear();
 }
 function exportPendentesPorSetor(){
-  askSenha('Exportar itens pendentes por setor', exportPendentesPorSetorExec);
+  askSenha('Itens pendentes por setor', abrirPendentesPorSetor);
 }
 function exportPendentesPorSetorExec(){
   const aprovados = allPeds.filter(r=>r.status==='aprovado');
@@ -1154,6 +1177,41 @@ function exportPendentesPorSetorExec(){
   toast('Relatório exportado 📊');
 }
 
+// ---- PENDENTES POR SETOR: tela de visualização ----
+var _ptRows=[], _ptAba=1;
+function ptEsc(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+function abrirPendentesPorSetor(){
+  _ptRows=[];
+  allPeds.filter(function(r){ return r.status==='aprovado'; }).forEach(function(p){
+    (p.items||[]).forEach(function(it){
+      if(!it.comprado) _ptRows.push({data:fmtDataCurta(p.ts), setor:p.setor+' ('+p.unidade+')', produto:it.n, qtd:it.q, un:it.u});
+    });
+  });
+  if(!_ptRows.length){ toast('Nenhum item pendente de compra 🎉'); return; }
+  _ptRows.sort(function(a,b){ return a.setor.localeCompare(b.setor) || a.produto.localeCompare(b.produto); });
+  _ptAba=1; goTo('s-pendentes'); ptRender();
+}
+function ptAba(n){ _ptAba=n; ptRender(); }
+function ptRender(){
+  document.getElementById('pt-t1').classList.toggle('on', _ptAba===1);
+  document.getElementById('pt-t2').classList.toggle('on', _ptAba===2);
+  const setores={}; _ptRows.forEach(function(r){ (setores[r.setor]=setores[r.setor]||[]).push(r); });
+  document.getElementById('pt-sub').textContent = _ptRows.length+' itens em '+Object.keys(setores).length+' setor(es)';
+  let h='';
+  if(_ptAba===1){
+    Object.keys(setores).forEach(function(s){
+      h+='<div class="pt-grp"><h3><span>'+ptEsc(s)+'</span><span>'+setores[s].length+' itens</span></h3>'+
+        setores[s].map(function(r){ return '<div class="pt-row"><div>'+ptEsc(r.produto)+'<br><small>pedido de '+ptEsc(r.data)+'</small></div><div class="pt-q">'+ptEsc(r.qtd)+'</div><div class="pt-un">'+ptEsc(r.un)+'</div></div>'; }).join('')+'</div>';
+    });
+  } else {
+    const m={}; _ptRows.forEach(function(r){ const k=r.produto+'|'+r.un; if(!m[k]) m[k]={produto:r.produto,un:r.un,qtd:0}; m[k].qtd+=(parseFloat(String(r.qtd).replace(',','.'))||0); });
+    const arr=Object.values(m).sort(function(a,b){ return a.produto.localeCompare(b.produto); });
+    h='<div class="pt-grp"><h3><span>Total para compra</span><span>'+arr.length+' produtos</span></h3>'+
+      arr.map(function(s){ const q=Number.isInteger(s.qtd)?s.qtd:Math.round(s.qtd*100)/100; return '<div class="pt-row"><div>'+ptEsc(s.produto)+'</div><div class="pt-q">'+q+'</div><div class="pt-un">'+ptEsc(s.un)+'</div></div>'; }).join('')+'</div>';
+  }
+  document.getElementById('pt-conteudo').innerHTML=h;
+}
+
 // ---- INIT ----
 atualizarIconeHome();
 aplicarTemaUnidade();
@@ -1197,7 +1255,7 @@ function renderSide(){
 function atualizarLayoutTela(id){
   document.body.classList.toggle('no-side', TELAS_SEM_MENU.indexOf(id) >= 0);
   renderSide();
-  const act = ({'s-detail':'s-home'})[id] || id;
+  const act = ({'s-detail':'s-home','s-pendentes':'__setor'})[id] || id;
   document.querySelectorAll('#side .side-it').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-s')===act); });
 }
 (function(){ const _apt = aplicarTemaUnidade; aplicarTemaUnidade = function(){ const r = _apt.apply(this, arguments); try{ renderSide(); }catch(e){} return r; }; })();
